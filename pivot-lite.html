@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Pivot-Lite: Filter and Averages</title>
+<style>
+  body{font:14px system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:16px}
+  header{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  fieldset{border:1px solid #ddd;border-radius:8px;padding:12px;margin:12px 0}
+  mark { background: #fff3b0; padding: 0 2px; }
+  legend{padding:0 6px;color:#444}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  label{display:flex;flex-direction:column;gap:6px}
+  .label-header{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  input[type="text"],input[type="date"],select{padding:6px;border:1px solid #ccc;border-radius:6px}
+  table{border-collapse:collapse;width:100%;margin-top:12px;table-layout:fixed}
+  th,td{border:1px solid #e5e5e5;padding:6px 8px;text-align:left;vertical-align:top;word-wrap:break-word;white-space:normal}
+  th{background:#f8f8f8}
+  td:nth-child(6),th:nth-child(6){width:25%}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:12px}
+  .card{border:1px solid #e5e5e5;border-radius:8px;padding:10px;background:#fafafa}
+  .muted{color:#666}
+  .btn{padding:8px 10px;border:1px solid #ccc;border-radius:6px;cursor:pointer;background:#fff}
+  .filter-search{position:relative}
+  .filter-search input[type="text"]{width:100%;box-sizing:border-box;margin-top:4px}
+  .filter-search select{width:100%}
+  .section-header{font-size:20px;font-weight:600;margin:20px 0 12px 0;color:#333}
+  .btn-clear{padding:4px 8px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:#fff;font-size:14px;line-height:1;color:#666}
+  .btn-clear:hover{background:#f5f5f5;color:#333}
+  .card.min{background:#ffe6e6}
+  .card.max{background:#e6f7e6}
+  tr.min{background:#ffe6e6}
+  tr.max{background:#e6f7e6}
+</style>
+</head>
+<body>
+<h2 class="section-header">Step 1: Load Data</h2>
+<header>
+  <input type="file" id="file" accept=".csv,text/csv" />
+  <!-- <button class="btn" id="download">Download matches CSV</button> -->
+  <span id="status" class="muted"></span>
+</header>
+
+<h2 class="section-header">Step 2: Apply Filters</h2>
+<fieldset>
+  <legend>Filters</legend>
+  <div 
+  style="font-size:12px;color:#666;font-style:italic;margin-bottom:8px">
+    Ctrl/Cmd + click to select multiple options
+  </div>
+  <div class="row">
+    <label>
+      <div class="label-header">
+        <span>Season FY</span>
+        <button class="btn-clear" onclick="clearSingleFilter('season_fy')" title="Clear this filter">×</button>
+      </div>
+      <select id="season_fy" multiple></select>
+    </label>
+    <label>
+      <div class="label-header">
+        <span>Season</span>
+        <button class="btn-clear" onclick="clearSingleFilter('season')" title="Clear this filter">×</button>
+      </div>
+      <select id="season" multiple></select>
+    </label>
+    <label class="filter-search">
+      <div class="label-header">
+        <span>Code</span>
+        <button class="btn-clear" onclick="clearSingleFilter('code')" title="Clear this filter">×</button>
+      </div>
+      <select id="code" multiple></select>
+      <input id="code_search" type="text" placeholder="search codes..." />
+    </label>
+    <label>
+      <div class="label-header">
+        <span>Quarter</span>
+        <button class="btn-clear" onclick="clearSingleFilter('quarter')" title="Clear this filter">×</button>
+      </div>
+      <select id="quarter" multiple></select>
+    </label>
+    <label>
+      <div class="label-header">
+        <span>Search Title</span>
+        <button class="btn-clear" onclick="clearSingleFilter('composer')" title="Clear this filter">×</button>
+      </div>
+      <input id="composer" type="text" placeholder="Search marketing title" />
+    </label>
+    <label>
+      <div class="label-header">
+        <span>Program contains</span>
+        <button class="btn-clear" onclick="clearSingleFilter('search_text')" title="Clear this filter">×</button>
+      </div>
+      <input id="search_text" type="text" placeholder="Search repertoire & artist(s)" />
+    </label>
+    <label>
+      <div class="label-header">
+        <span>First Perf from</span>
+        <button class="btn-clear" onclick="clearSingleFilter('date_from')" title="Clear this filter">×</button>
+      </div>
+      <input id="date_from" type="date" />
+    </label>
+    <label>
+      <div class="label-header">
+        <span>First Perf to</span>
+        <button class="btn-clear" onclick="clearSingleFilter('date_to')" title="Clear this filter">×</button>
+      </div>
+      <input id="date_to" type="date" />
+    </label>
+  </div>
+  <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn" id="apply">Apply</button>
+    <button class="btn" id="clear">Clear filters</button>
+  </div>
+</fieldset>
+
+<h2 class="section-header">Results</h2>
+<div class="stats" id="stats"></div>
+<table id="matches">
+  <thead></thead>
+  <tbody></tbody>
+</table>
+
+<script>
+/* tiny CSV parser: quotes, commas, newlines */
+function parseCSV(text) {
+  const rows = []; let i=0, cur=[], field="", inQuotes=false;
+  while (i<text.length) {
+    const c=text[i];
+    if (inQuotes){
+      if(c==='"'){ if(text[i+1]==='"'){field+='"'; i+=2; continue;} inQuotes=false; i++; continue;}
+      field+=c; i++; continue;
+    } else {
+      if(c==='"'){ inQuotes=true; i++; continue;}
+      if(c===','){ cur.push(field); field=""; i++; continue;}
+      if(c==='\r'){ i++; continue;}
+      if(c==='\n'){ cur.push(field); rows.push(cur); cur=[]; field=""; i++; continue;}
+      field+=c; i++; continue;
+    }
+  }
+  cur.push(field); rows.push(cur); return rows;
+}
+
+let DATA=[]; let HEADERS=[]; let CURRENT_FILENAME="";
+const expected=[
+  "season_fy","season","code","search_title","composer","search_text","first_perf_date",
+  "search_string_2","num_perfs","ticket_revenue","paid_ticket_count","comp_ticket_count","quarter"
+];
+function normalizeHeader(h){return h.trim().toLowerCase().replace(/\s+/g,"_");}
+
+function saveFilters(){
+  if(!CURRENT_FILENAME) return;
+  const filters={
+    season_fy: getSelectedMulti("season_fy"),
+    season: getSelectedMulti("season"),
+    code: getSelectedMulti("code"),
+    quarter: getSelectedMulti("quarter"),
+    composer: document.getElementById("composer").value,
+    search_text: document.getElementById("search_text").value,
+    date_from: document.getElementById("date_from").value,
+    date_to: document.getElementById("date_to").value,
+    code_search: document.getElementById("code_search").value
+  };
+  localStorage.setItem(`filters_${CURRENT_FILENAME}`, JSON.stringify(filters));
+}
+
+function loadFilters(){
+  if(!CURRENT_FILENAME) return;
+  const saved = localStorage.getItem(`filters_${CURRENT_FILENAME}`);
+  if(!saved) return;
+
+  try{
+    const filters = JSON.parse(saved);
+
+    // Restore multi-selects
+    ["season_fy","season","code","quarter"].forEach(id=>{
+      const el=document.getElementById(id);
+      const vals=filters[id]||[];
+      [...el.options].forEach(o=>o.selected=vals.includes(o.value));
+    });
+
+    // Restore text inputs
+    document.getElementById("composer").value=filters.composer||"";
+    document.getElementById("search_text").value=filters.search_text||"";
+    document.getElementById("date_from").value=filters.date_from||"";
+    document.getElementById("date_to").value=filters.date_to||"";
+    document.getElementById("code_search").value=filters.code_search||"";
+
+    // Apply code search filter if present
+    if(filters.code_search){
+      const query=filters.code_search.toLowerCase();
+      const codeEl=document.getElementById("code");
+      const filtered=ALL_CODES.filter(c=>String(c).toLowerCase().includes(query));
+      codeEl.innerHTML="";
+      filtered.forEach(v=>{
+        const o=document.createElement("option");
+        o.value=v; o.textContent=v;
+        if((filters.code||[]).includes(v)) o.selected=true;
+        codeEl.appendChild(o);
+      });
+    }
+  }catch(e){
+    console.error("Failed to load filters:",e);
+  }
+}
+
+function clearSavedFilters(){
+  if(!CURRENT_FILENAME) return;
+  localStorage.removeItem(`filters_${CURRENT_FILENAME}`);
+}
+
+function clearSingleFilter(filterId){
+  const el=document.getElementById(filterId);
+  if(!el) return;
+
+  if(el.tagName==="SELECT"){
+    // Clear multi-select
+    [...el.options].forEach(o=>o.selected=false);
+    // Also clear code search if clearing code filter
+    if(filterId==="code"){
+      document.getElementById("code_search").value="";
+      // Restore all codes
+      const codeEl=document.getElementById("code");
+      codeEl.innerHTML="";
+      ALL_CODES.forEach(v=>{const o=document.createElement("option"); o.value=v; o.textContent=v; codeEl.appendChild(o);});
+    }
+  }else{
+    // Clear text/date input
+    el.value="";
+  }
+
+  saveFilters();
+  renderAll();
+}
+
+function loadCSVFile(file){
+  CURRENT_FILENAME=file.name;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    const rows=parseCSV(reader.result||""); if(!rows.length) return;
+    HEADERS=rows[0]; const normMap=HEADERS.map(normalizeHeader);
+    const missing=expected.filter(c=>!normMap.includes(c));
+    const status=document.getElementById("status");
+    if(missing.length){ status.textContent="Missing columns: "+missing.join(", "); DATA=[]; renderAll(); return;}
+    DATA=rows.slice(1).filter(r=>r.some(x=>String(x??"").trim()!=="")).map(r=>{
+      const o={}; for(let i=0;i<HEADERS.length;i++){ o[normMap[i]]=r[i]??""; }
+      o.first_perf_date_obj=toDate(o.first_perf_date);
+      o.num_perfs=toNum(o.num_perfs);
+      o.ticket_revenue=toNum(o.ticket_revenue);
+      o.paid_ticket_count=toNum(o.paid_ticket_count);
+      o.comp_ticket_count=toNum(o.comp_ticket_count);
+      return o;
+    });
+    status.textContent=`Loaded ${DATA.length} rows.`;
+    populateFilterOptions();
+    loadFilters();
+    renderAll();
+  };
+  reader.readAsText(file);
+}
+function toDate(s){ if(!s) return null; const d=new Date(s); return isNaN(d.getTime())?null:d; }
+function toNum(s){ if(s===null||s===undefined) return NaN; const v=Number(String(s).replace(/[$,]/g,"").trim()); return isNaN(v)?NaN:v; }
+function uniq(arr){ return [...new Set(arr.filter(v=>v!==undefined&&v!==null&&String(v).trim()!==""))].sort((a,b)=>{const an=Number(a),bn=Number(b); if(!isNaN(an)&&!isNaN(bn)) return an-bn; return String(a).localeCompare(String(b));});}
+let ALL_CODES = [];
+function populateFilterOptions(){
+  const set=(id,vals)=>{ const el=document.getElementById(id); el.innerHTML=""; uniq(vals).forEach(v=>{const o=document.createElement("option"); o.value=v; o.textContent=v; el.appendChild(o);});};
+  set("season_fy",DATA.map(r=>r.season_fy));
+  set("season",DATA.map(r=>r.season));
+  ALL_CODES = uniq(DATA.map(r=>r.code));
+  set("code",ALL_CODES);
+  set("quarter",DATA.map(r=>r.quarter));
+}
+document.getElementById("code_search").addEventListener("input", e=>{
+  const query = e.target.value.toLowerCase();
+  const codeEl = document.getElementById("code");
+  const selectedVals = [...codeEl.selectedOptions].map(o=>o.value);
+  codeEl.innerHTML = "";
+  const filtered = ALL_CODES.filter(c=>String(c).toLowerCase().includes(query));
+  filtered.forEach(v=>{
+    const o=document.createElement("option");
+    o.value=v; o.textContent=v;
+    if(selectedVals.includes(v)) o.selected=true;
+    codeEl.appendChild(o);
+  });
+});
+function getSelectedMulti(id){ return [...document.getElementById(id).selectedOptions].map(o=>o.value); }
+function normalizeAccents(str){ return String(str||"").normalize("NFD").replace(/[\u0300-\u036f]/g,""); }
+function contains(field, needle){
+  if(!needle) return true;
+  const fieldStr = normalizeAccents(field).toLowerCase();
+  const needleStr = normalizeAccents(needle).toLowerCase();
+  // Check if needle contains wildcard
+  if(needleStr.includes("*")) {
+    // Escape regex special chars except *, then replace * with .*
+    const pattern = needleStr.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+    const regex = new RegExp("^" + pattern + "$", "i");
+    return regex.test(normalizeAccents(field||""));
+  }
+  return fieldStr.includes(needleStr);
+}
+function stripTime(d){ return new Date(d.getFullYear(),d.getMonth(),d.getDate()); }
+function endOfDay(d){ return new Date(d.getFullYear(),d.getMonth(),d.getDate(),23,59,59,999); }
+
+function applyFilters(){
+  let rows=DATA;
+  const fy=getSelectedMulti("season_fy"); if(fy.length) rows=rows.filter(r=>fy.includes(String(r.season_fy)));
+  const season=getSelectedMulti("season"); if(season.length) rows=rows.filter(r=>season.includes(String(r.season)));
+  const code=getSelectedMulti("code"); if(code.length) rows=rows.filter(r=>code.includes(String(r.code)));
+  const q=getSelectedMulti("quarter"); if(q.length) rows=rows.filter(r=>q.includes(String(r.quarter)));
+
+  const compSub=document.getElementById("composer").value.trim();   // relabeled as Search Title (fuzzy)
+  const txtSub=document.getElementById("search_text").value.trim();
+  rows=rows.filter(r=>contains(r.composer,compSub) && contains(r.search_text,txtSub));
+
+  const dFrom=document.getElementById("date_from").valueAsDate;
+  const dTo=document.getElementById("date_to").valueAsDate;
+  if(dFrom) rows=rows.filter(r=>r.first_perf_date_obj && r.first_perf_date_obj>=stripTime(dFrom));
+  if(dTo) rows=rows.filter(r=>r.first_perf_date_obj && r.first_perf_date_obj<=endOfDay(dTo));
+  return rows;
+}
+
+function formatMoney(v){ if(typeof v!=="number"||isNaN(v)) return ""; return v.toLocaleString(undefined,{style:"currency",currency:"USD",maximumFractionDigits:0}); }
+function formatInt(v){ if(typeof v!=="number"||isNaN(v)) return ""; return Math.round(v).toLocaleString(); }
+function formatDate(d){ if(!d) return ""; return d.toLocaleDateString(); }
+
+function renderAll(){ const rows=applyFilters(); renderStats(rows); renderTable(rows); }
+
+function renderStats(rows){
+  const stats=document.getElementById("stats"); stats.innerHTML="";
+
+  if(!DATA.length){
+    const div=document.createElement("div");
+    div.className="card";
+    div.style.gridColumn="1/-1";
+    div.innerHTML='<div style="text-align:center;padding:20px"><div class="muted">No data loaded</div><div style="margin-top:8px">Please select a CSV file in Step 1 above to get started.</div></div>';
+    stats.appendChild(div);
+    return;
+  }
+
+  const n=rows.length;
+  const sum=key=>rows.reduce((a,r)=> (isFinite(r[key])? a+Number(r[key]) : a), 0);
+  const safeDiv=(num,den)=> den? num/den : NaN;
+
+  const totalRevenue=sum("ticket_revenue");
+  const totalPerf=sum("num_perfs");
+  const totalPaid=sum("paid_ticket_count");
+  const totalComp=sum("comp_ticket_count");
+
+  const avgRevPerPerf=safeDiv(totalRevenue,totalPerf);
+  const avgPaidPerPerf=safeDiv(totalPaid,totalPerf);
+  const avgCompPerPerf=safeDiv(totalComp,totalPerf);
+
+  // Calculate min/max revenue per performance
+  const revPerPerfValues = rows.map(r=>safeDiv(r.ticket_revenue, r.num_perfs)).filter(v=>isFinite(v));
+  const minRevPerPerf = revPerPerfValues.length ? Math.min(...revPerPerfValues) : NaN;
+  const maxRevPerPerf = revPerPerfValues.length ? Math.max(...revPerPerfValues) : NaN;
+
+  const cards=[
+    ["Rows matched", n, ""],
+    ["Sum Ticket Revenue", formatMoney(totalRevenue), ""],
+    ["Sum # Performances", formatInt(totalPerf), ""],
+    ["Min Avg Ticket Revenue / Perf", formatMoney(minRevPerPerf), "min"],
+    ["Avg Ticket Revenue / Perf", formatMoney(avgRevPerPerf), ""],
+    ["Max Avg Ticket Revenue / Perf", formatMoney(maxRevPerPerf), "max"],
+    ["Avg Paid Tickets / Perf", formatInt(avgPaidPerPerf), ""],
+    ["Avg Comp Tickets / Perf", formatInt(avgCompPerPerf), ""],
+  ];
+  for(const [k,v,cssClass] of cards){
+    const div=document.createElement("div");
+    div.className="card" + (cssClass ? " " + cssClass : "");
+    div.innerHTML=`<div class="muted">${k}</div><div style="font-size:18px;">${v||""}</div>`;
+    stats.appendChild(div);
+  }
+}
+
+function renderTable(rows){
+  // read current filters to decide highlights
+  const fySel     = new Set(getSelectedMulti("season_fy").map(String));
+  const seasonSel = new Set(getSelectedMulti("season").map(String));
+  const codeSel   = new Set(getSelectedMulti("code").map(String));
+  const qSel      = new Set(getSelectedMulti("quarter").map(String));
+  const fuzzyTitle = document.getElementById("composer").value.trim();   // "Search Title (fuzzy)"
+  const txtSub     = document.getElementById("search_text").value.trim();
+  const dFrom = document.getElementById("date_from").valueAsDate;
+  const dTo   = document.getElementById("date_to").valueAsDate;
+
+  // Calculate min/max revenue per performance for row highlighting
+  const safeDiv=(num,den)=> den? num/den : NaN;
+  const revPerPerfValues = rows.map(r=>safeDiv(r.ticket_revenue, r.num_perfs)).filter(v=>isFinite(v));
+  const minRevPerPerf = revPerPerfValues.length ? Math.min(...revPerPerfValues) : NaN;
+  const maxRevPerPerf = revPerPerfValues.length ? Math.max(...revPerPerfValues) : NaN;
+
+  // show search_text as "program"; hide composer
+  const cols = [
+    ["season_fy","Season FY"],
+    ["season","Season"],
+    ["quarter","Quarter"],
+    ["code","Production Code"],
+    ["search_title","Search Title"],
+    ["search_text","Program"],        // relabeled header
+    ["first_perf_date","Production Open"],
+    ["num_perfs","No. Perfs"],
+    ["ticket_revenue","Ticket Revenue"],
+    ["paid_ticket_count","Paid Tickets"],
+    ["comp_ticket_count","Comp Tickets"],
+  ];
+
+  const thead = document.querySelector("#matches thead");
+  const tbody = document.querySelector("#matches tbody");
+  thead.innerHTML = "<tr>" + cols.map(([_,label])=>`<th>${label}</th>`).join("") + "</tr>";
+  tbody.innerHTML = "";
+
+  // helpers
+  const escReg = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const highlightSubstr = (text, needle) => {
+    if (!needle) return safe(text);
+    const textStr = String(text || "");
+    const needleLen = needle.length;
+    const textNorm = normalizeAccents(textStr).toLowerCase();
+    const needleNorm = normalizeAccents(needle).toLowerCase();
+
+    // Find all match positions in normalized text
+    const matches = [];
+    let pos = 0;
+    while ((pos = textNorm.indexOf(needleNorm, pos)) !== -1) {
+      matches.push({ start: pos, end: pos + needleLen });
+      pos++;
+    }
+
+    if (matches.length === 0) return textStr;
+
+    // Build result with highlights
+    let result = "";
+    let lastEnd = 0;
+    for (const match of matches) {
+      result += textStr.substring(lastEnd, match.start);
+      result += `<mark>${textStr.substring(match.start, match.end)}</mark>`;
+      lastEnd = match.end;
+    }
+    result += textStr.substring(lastEnd);
+    return result;
+  };
+  const safeDate = d => d ? d.toLocaleDateString() : "";
+  const withinDate = d => {
+    if (!d) return false;
+    const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    if (dFrom && x < new Date(dFrom.getFullYear(), dFrom.getMonth(), dFrom.getDate())) return false;
+    if (dTo   && x > new Date(dTo.getFullYear(),   dTo.getMonth(),   dTo.getDate(), 23,59,59,999)) return false;
+    return dFrom || dTo ? true : false;
+  };
+  function safe(v){ return (v==null ? "" : String(v)); }
+  const wrapIf = (cond, text) => cond ? `<mark>${safe(text)}</mark>` : safe(text);
+
+  for (const r of rows) {
+    const data = {
+      season_fy: r.season_fy,
+      season: r.season,
+      quarter: r.quarter,
+      code: r.code,
+      search_title: r.search_title,
+      search_text: r.search_text,
+      first_perf_date: r.first_perf_date_obj,
+      num_perfs: r.num_perfs,
+      ticket_revenue: r.ticket_revenue,
+      paid_ticket_count: r.paid_ticket_count,
+      comp_ticket_count: r.comp_ticket_count,
+    };
+
+    // build HTML cells with highlights
+    const cellHTML = {
+      season_fy: wrapIf(fySel.size && fySel.has(String(r.season_fy)), r.season_fy),
+      season:    wrapIf(seasonSel.size && seasonSel.has(String(r.season)), r.season),
+      quarter:   wrapIf(qSel.size && qSel.has(String(r.quarter)), r.quarter),
+      code:      wrapIf(codeSel.size && codeSel.has(String(r.code)), r.code),
+      search_title: highlightSubstr(r.search_title, fuzzyTitle),
+      search_text:  highlightSubstr(r.search_text,  txtSub),
+      first_perf_date: wrapIf(withinDate(r.first_perf_date_obj), safeDate(r.first_perf_date_obj)),
+      num_perfs:          safe(isFinite(r.num_perfs) ? Math.round(r.num_perfs).toLocaleString() : ""),
+      ticket_revenue:     safe(isFinite(r.ticket_revenue) ? r.ticket_revenue.toLocaleString(undefined,{style:"currency",currency:"USD",maximumFractionDigits:0}) : ""),
+      paid_ticket_count:  safe(isFinite(r.paid_ticket_count) ? Math.round(r.paid_ticket_count).toLocaleString() : ""),
+      comp_ticket_count:  safe(isFinite(r.comp_ticket_count) ? Math.round(r.comp_ticket_count).toLocaleString() : "")
+    };
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = cols.map(([key]) => `<td>${cellHTML[key] ?? ""}</td>`).join("");
+
+    // Apply min/max highlighting to rows (only if more than one row)
+    if(rows.length > 1) {
+      const rowRevPerPerf = safeDiv(r.ticket_revenue, r.num_perfs);
+      if(isFinite(rowRevPerPerf) && isFinite(minRevPerPerf) && rowRevPerPerf === minRevPerPerf) {
+        tr.className = "min";
+      } else if(isFinite(rowRevPerPerf) && isFinite(maxRevPerPerf) && rowRevPerPerf === maxRevPerPerf) {
+        tr.className = "max";
+      }
+    }
+
+    tbody.appendChild(tr);
+  }
+
+  document.getElementById("status").textContent =
+    DATA.length ? `Showing ${rows.length} of ${DATA.length}` : "";
+}
+
+function toCSV(rows){
+  const cols=Object.keys(rows[0]||{});
+  const esc=s=>`"${String(s).replace(/"/g,'""')}"`;
+  const header=cols.map(esc).join(",");
+  const body=rows.map(r=>cols.map(c=>esc(r[c]??"")).join(",")).join("\n");
+  return header+"\n"+body;
+}
+
+document.getElementById("file").addEventListener("change", e=>{
+  const f=e.target.files[0]; if(f) loadCSVFile(f);
+});
+document.getElementById("apply").addEventListener("click", ()=>{
+  saveFilters();
+  renderAll();
+});
+// Allow Enter key to apply filters in search fields
+document.getElementById("composer").addEventListener("keypress", e=>{
+  if(e.key==="Enter"){ saveFilters(); renderAll(); }
+});
+document.getElementById("search_text").addEventListener("keypress", e=>{
+  if(e.key==="Enter"){ saveFilters(); renderAll(); }
+});
+document.getElementById("clear").addEventListener("click", ()=>{
+  for(const id of ["season_fy","season","code","quarter"]){
+    const el=document.getElementById(id); [...el.options].forEach(o=>o.selected=false);
+  }
+  for(const id of ["composer","search_text","date_from","date_to","code_search"]){
+    const el=document.getElementById(id); el.value="";
+  }
+  // Restore all codes when clearing search
+  const codeEl=document.getElementById("code");
+  codeEl.innerHTML="";
+  ALL_CODES.forEach(v=>{const o=document.createElement("option"); o.value=v; o.textContent=v; codeEl.appendChild(o);});
+  clearSavedFilters();
+  renderAll();
+});
+document.getElementById("download").addEventListener("click", ()=>{
+  const rows=applyFilters(); if(!rows.length) return;
+  const exportRows=rows.map(r=>({
+    season_fy:r.season_fy,
+    season:r.season,
+    code:r.code,
+    search_title:r.search_title,
+    composer:r.composer,
+    search_text:r.search_text,
+    first_perf_date:r.first_perf_date_obj? r.first_perf_date_obj.toISOString().slice(0,10) : "",
+    search_string_2:r.search_string_2,   // retained in export; no filter UI
+    num_perfs:r.num_perfs,
+    ticket_revenue:r.ticket_revenue,
+    paid_ticket_count:r.paid_ticket_count,
+    comp_ticket_count:r.comp_ticket_count,
+    quarter:r.quarter
+  }));
+  const csv=toCSV(exportRows);
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download="matches.csv"; a.click();
+  URL.revokeObjectURL(a.href);
+});
+</script>
+</body>
+</html>
