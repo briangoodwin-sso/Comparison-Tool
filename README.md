@@ -21,13 +21,12 @@ This tool helps you:
 
 
 1. **Open the tool**
-   - Locate the file named `pivot-lite.html` on your computer
-   - Double-click it to open in your web browser (Chrome, Firefox, Safari, or Edge)
+   - In your web browser, visit [this link](https://briangoodwin-sso.github.io/Comparison-Tool/).
 
 
 2. **Load your data**
    - Click the "Choose File" button at the top
-   - Select the CSV file you want to analyze (like `Combined_Output.csv`)
+   - Select the CSV file you want to analyze (like `MKT_searchable_season.csv`)
    - The tool will display how many rows were loaded
 
 
